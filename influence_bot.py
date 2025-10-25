@@ -1,7 +1,6 @@
 # influence_bot.py
 import os
 import json
-import asyncio
 from typing import Dict, Any, List, Optional
 from telegram import Update
 from telegram.ext import (
@@ -28,7 +27,8 @@ if not os.path.exists(DATA_DIR):
     A_STORIES,
     A_VISUAL_STYLE,
     A_IA_PERCENT,
-) = range(10)
+    A_MORE_ACCOUNTS,
+) = range(11)
 
 # ========== Утилиты хранения ==========
 def data_path(chat_id: int) -> str:
@@ -39,7 +39,6 @@ def load_chat_data(chat_id: int) -> Dict[str, Any]:
     if os.path.exists(path):
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
-    # структура: accounts: {username: {...}}, order: [usernames]
     return {"accounts": {}, "order": []}
 
 def save_chat_data(chat_id: int, data: Dict[str, Any]):
@@ -59,11 +58,9 @@ def compute_IS(weeks_active: float, total_weeks: float) -> Optional[float]:
     return (weeks_active / total_weeks) * 100.0
 
 def normalize_VS(vs_rating: float) -> float:
-    # vs_rating expected 1..5 -> normalize to 0..100
     return max(0.0, min(5.0, vs_rating)) / 5.0 * 100.0
 
 def compute_I(er: Optional[float], is_: Optional[float], ia: Optional[float], vs_pct: float) -> Optional[float]:
-    # If ER missing, still compute with zeros, but better to return None if followers unknown
     a = er if er is not None else 0.0
     b = is_ if is_ is not None else 0.0
     c = ia if ia is not None else 0.0
@@ -73,22 +70,23 @@ def compute_I(er: Optional[float], is_: Optional[float], ia: Optional[float], vs
 # ========== Команды ==========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     txt = (
-        "Привет! Я бот-аналитик для вашей группы/проекта.\n\n"
-        "Команды:\n"
+        "Привет! Я бот-аналитик аккаунтов.\n\n"
+        "Доступные команды:\n"
         "/add - добавить аккаунт (буду задавать вопросы)\n"
-        "/list - показать добавленные аккаунты\n"
-        "/compare <u1> <u2> <u3> - сравнить три аккаунта (по-умолчанию возьму 3 последних)\n"
-        "/export - сохранить данные в CSV и получить файл\n"
-        "/clear - очистить все данные для этого чата\n"
-        "/help - подсказка\n\n"
-        "Важно: бот не парсит Instagram — вы вводите цифры сами (подписчики, лайки и т.д.)."
+        "/list - показать сохранённые аккаунты\n"
+        "/compare <u1> <u2> ... - сравнить несколько аккаунтов (если без аргументов — возьму все)\n"
+        "/export - сохранить данные в CSV\n"
+        "/clear - очистить данные чата\n"
+        "/formulas - показать формулы расчёта метрик\n"
+        "/help - помощь\n\n"
+        "Важно: вы сами вводите данные (подписчики, лайки, комментарии)."
     )
     await update.message.reply_text(txt)
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await start(update, context)
 
-# ===== Add flow =====
+# ========== Add flow ==========
 async def add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Добавление аккаунта. Введите username (ник без @):")
     return A_USERNAME
@@ -136,7 +134,7 @@ async def add_posts_per_week(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except Exception:
         await update.message.reply_text("Нужно число. Введите посты в неделю:")
         return A_POSTS_PER_WEEK
-    await update.message.reply_text("Сколько недель из последних N он был активен? (введите число недель с активностью)")
+    await update.message.reply_text("Сколько недель из последних N аккаунт был активен?")
     return A_WEEKS_ACTIVE
 
 async def add_weeks_active(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -146,7 +144,7 @@ async def add_weeks_active(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         await update.message.reply_text("Нужно число. Введите количество недель с активностью:")
         return A_WEEKS_ACTIVE
-    await update.message.reply_text("За какой период считаем (общее число недель), например 12:")
+    await update.message.reply_text("Общее число недель для расчёта (например 12):")
     return A_TOTAL_WEEKS
 
 async def add_total_weeks(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -188,12 +186,12 @@ async def add_ia_percent(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Нужно число >= 0. Введи IA в процентах:")
         return A_IA_PERCENT
 
-    # собрали все данные — сохраняем
+    # Сохраняем аккаунт
     acc = context.user_data.pop('new_account')
     chat_id = update.effective_chat.id
     data = load_chat_data(chat_id)
     uname = acc['username']
-    # вычислим метрики
+
     er = compute_ER(acc.get('followers', 0), acc.get('avg_likes', 0.0), acc.get('avg_comments', 0.0))
     is_ = compute_IS(acc.get('weeks_active', 0.0), acc.get('total_weeks', 0.0))
     vs_pct = normalize_VS(acc.get('visual_style', 0.0))
@@ -206,24 +204,21 @@ async def add_ia_percent(update: Update, context: ContextTypes.DEFAULT_TYPE):
     acc['I'] = compute_I(er, is_, ia, vs_pct)
 
     data['accounts'][uname] = acc
-    # keep order
     if uname not in data['order']:
         data['order'].append(uname)
     save_chat_data(chat_id, data)
 
-    # reply summary
-    lines = [
-        f"Сохранено: @{uname}",
-        f"Подписчики: {acc['followers']}",
-        f"avg likes: {acc['avg_likes']}, avg comments: {acc['avg_comments']}",
-        f"ER = {acc['ER']:.3f}% " if acc['ER'] is not None else "ER: N/A",
-        f"IS = {acc['IS']:.2f}% " if acc['IS'] is not None else "IS: N/A",
-        f"IA = {acc['IA']:.2f}%",
-        f"VS (1-5) -> {acc['visual_style']} -> {acc['VS_pct']:.1f}%",
-        f"I = {acc['I']:.3f}" if acc['I'] is not None else "I: N/A"
-    ]
-    await update.message.reply_text("\n".join(lines))
-    return ConversationHandler.END
+    await update.message.reply_text(f"✅ Сохранено: @{uname}\nХочешь добавить ещё аккаунт? (да/нет)")
+    return A_MORE_ACCOUNTS
+
+async def add_more_accounts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    txt = update.message.text.strip().lower()
+    if txt in ("да", "yes", "y"):
+        await update.message.reply_text("Введите следующий username (без @):")
+        return A_USERNAME
+    else:
+        await update.message.reply_text("Все аккаунты добавлены. Можешь использовать /compare для анализа.")
+        return ConversationHandler.END
 
 async def add_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop('new_account', None)
@@ -239,7 +234,7 @@ async def list_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines = ["Сохранённые аккаунты:"]
     for uname in data['order']:
         acc = data['accounts'].get(uname, {})
-        lines.append(f"@{uname} — I={acc.get('I'):.3f}" if acc.get('I') is not None else f"@{uname} — I:N/A")
+        lines.append(f"@{uname} — I={acc.get('I', 0):.3f}" if acc.get('I') else f"@{uname} — I:N/A")
     await update.message.reply_text("\n".join(lines))
 
 async def clear_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -261,23 +256,19 @@ async def export_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         writer.writerow(keys)
         for u in data['order']:
             acc = data['accounts'].get(u, {})
-            row = [acc.get(k) for k in ["username","followers","avg_likes","avg_comments","posts_per_week","weeks_active","total_weeks","uses_stories","visual_style","ia_percent","ER","IS","IA","VS_pct","I"]]
+            row = [acc.get(k) for k in keys]
             writer.writerow(row)
     await update.message.reply_document(open(out_path, "rb"))
 
+# ========== Compare ==========
 async def compare_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # usage: /compare a b c  OR without args -> take last 3 added
     args = context.args
     data = load_chat_data(update.effective_chat.id)
-    to_compare: List[str] = []
-    if args and len(args) >= 1:
-        to_compare = [a.lstrip("@") for a in args[:3]]
-    else:
-        to_compare = data['order'][-3:][::-1]  # last 3 (reverse to maintain insertion order)
-    if not to_compare:
-        await update.message.reply_text("Нет аккаунтов для сравнения. Добавь их через /add или укажи имена после команды.")
+    if not data['order']:
+        await update.message.reply_text("Нет аккаунтов для сравнения.")
         return
-    # collect existing accounts
+
+    to_compare = [a.lstrip("@") for a in args] if args else data['order']
     found = []
     not_found = []
     for u in to_compare:
@@ -286,18 +277,52 @@ async def compare_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             not_found.append(u)
     if not_found:
-        await update.message.reply_text("Не найдены данные по: " + ", ".join(not_found) + ". Добавь их через /add.")
+        await update.message.reply_text("Не найдены данные по: " + ", ".join(not_found))
         return
-    # sort by I descending
+
+    # Сортировка по I
     sorted_accs = sorted(found, key=lambda x: x.get('I') or 0, reverse=True)
-    lines = ["Сравнение:"]
+
+    # Лидеры по каждой метрике
+    best_ER = max(found, key=lambda x: x.get('ER') or 0)
+    best_IS = max(found, key=lambda x: x.get('IS') or 0)
+    best_IA = max(found, key=lambda x: x.get('IA') or 0)
+    best_VS = max(found, key=lambda x: x.get('VS_pct') or 0)
+    best_I = sorted_accs[0]
+
+    lines = ["📊 Сравнение аккаунтов:"]
     for i, acc in enumerate(sorted_accs, start=1):
-        er = f"{acc['ER']:.3f}%" if acc['ER'] is not None else "N/A"
+        er = f"{acc['ER']:.2f}%" if acc['ER'] is not None else "N/A"
         is_ = f"{acc['IS']:.2f}%" if acc['IS'] is not None else "N/A"
         ia = f"{acc['IA']:.2f}%"
         vs = f"{acc['visual_style']} ({acc['VS_pct']:.1f}%)"
         lines.append(f"{i}. @{acc['username']} — I={acc['I']:.3f}\n   ER={er}, IS={is_}, IA={ia}, VS={vs}")
+
     await update.message.reply_text("\n\n".join(lines))
+
+    explanation = (
+        f"\n🏆 Лидер по общей оценке I: @{best_I['username']} — {best_I['I']:.3f}\n"
+        f"ER — вовлечённость: @{best_ER['username']} ({best_ER['ER']:.2f}%) — показывает активность аудитории.\n"
+        f"IS — активность аккаунта: @{best_IS['username']} ({best_IS['IS']:.2f}%) — показывает стабильность активности.\n"
+        f"IA — взаимная активность: @{best_IA['username']} ({best_IA['IA']:.2f}%) — качество взаимодействия с подписчиками.\n"
+        f"VS — визуальный стиль: @{best_VS['username']} ({best_VS['VS_pct']:.1f}%) — привлекательность контента.\n"
+    )
+    await update.message.reply_text(explanation)
+
+# ========== Formulas ==========
+async def formulas_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    txt = (
+        "📐 Формулы расчёта метрик:\n\n"
+        "1️⃣ ER (вовлечённость):\n"
+        "   ER = (avg_likes + avg_comments) / followers * 100%\n\n"
+        "2️⃣ IS (активность аккаунта):\n"
+        "   IS = weeks_active / total_weeks * 100%\n\n"
+        "3️⃣ VS (визуальный стиль):\n"
+        "   VS_pct = VS_rating / 5 * 100%\n\n"
+        "4️⃣ I (индекс влияния):\n"
+        "   I = 0.4*ER + 0.3*IS + 0.2*IA + 0.1*VS_pct\n"
+    )
+    await update.message.reply_text(txt)
 
 # ========== Error handler ==========
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
@@ -307,7 +332,6 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
-    # Conversation for adding account
     conv = ConversationHandler(
         entry_points=[CommandHandler('add', add_start)],
         states={
@@ -321,6 +345,7 @@ def main():
             A_STORIES: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_stories)],
             A_VISUAL_STYLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_visual_style)],
             A_IA_PERCENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_ia_percent)],
+            A_MORE_ACCOUNTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_more_accounts)],
         },
         fallbacks=[CommandHandler('cancel', add_cancel)],
         allow_reentry=True
@@ -333,9 +358,10 @@ def main():
     app.add_handler(CommandHandler("clear", clear_cmd))
     app.add_handler(CommandHandler("export", export_cmd))
     app.add_handler(CommandHandler("compare", compare_cmd))
-    app.add_error_handler(error_handler)
+    app.add_handler(CommandHandler("formulas", formulas_cmd))
 
-    print("Bot started")
+    app.add_error_handler(error_handler)
+    print("Bot is running...")
     app.run_polling()
 
 if __name__ == "__main__":
