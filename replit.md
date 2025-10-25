@@ -15,6 +15,7 @@ This is a Telegram bot that analyzes Instagram account influence metrics. It hel
 - Dependencies installed: python-telegram-bot v20.7, requests
 - Workflow configured to run the bot
 - Security: Bot token moved to environment variable (TELEGRAM_BOT_TOKEN)
+- **Deployment configured** - Ready to publish for 24/7 operation
 
 ## Setup Required
 The bot requires a Telegram Bot API token to run. This should be set as a secret named `TELEGRAM_BOT_TOKEN`.
@@ -42,6 +43,14 @@ The bot requires a Telegram Bot API token to run. This should be set as a secret
 4. **IA (Interaction Index)**: User-provided percentage
 5. **I (Influence Index)**: `0.4*ER + 0.3*IS + 0.2*IA + 0.1*VS`
 
+## Deployment
+The bot is configured for Reserved VM deployment, which means:
+- It will run 24/7 without interruptions
+- Automatic restarts on failures
+- Persistent data storage in `bot_data/` directory
+
+To publish the bot, click the "Deploy" button at the top of Replit interface.
+
 ## Recent Changes
 - 2025-10-25: Imported from GitHub and set up for Replit
   - Installed Python 3.11
@@ -50,3 +59,4 @@ The bot requires a Telegram Bot API token to run. This should be set as a secret
   - Added .gitignore for Python projects
   - Configured workflow to run the bot
   - Added token validation with helpful error messages
+  - Configured deployment for 24/7 operation (Reserved VM)
