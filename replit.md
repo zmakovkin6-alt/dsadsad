@@ -12,8 +12,9 @@ This is a Telegram bot that analyzes Instagram account influence metrics. It hel
 
 ## Current State
 - Python 3.11 project
-- Dependencies installed: python-telegram-bot v20.7, requests
-- Workflow configured to run the bot
+- Dependencies installed: python-telegram-bot v20.7, requests, aiohttp
+- Workflow configured to run the bot in polling mode (local development)
+- **Webhook mode ready** - Bot can run on Render for free 24/7
 - Security: Bot token moved to environment variable (TELEGRAM_BOT_TOKEN)
 - **Deployment configured** - Ready to publish for 24/7 operation
 
@@ -51,6 +52,13 @@ The bot is configured for Reserved VM deployment, which means:
 
 To publish the bot, click the "Deploy" button at the top of Replit interface.
 
+## Bot Modes
+The bot supports two modes:
+- **Polling mode** (default) - For local development in Replit
+- **Webhook mode** - For deployment on Render (set `BOT_MODE=webhook`)
+
+See `RENDER_DEPLOY.md` for detailed instructions on deploying to Render for free 24/7 operation.
+
 ## Recent Changes
 - 2025-10-25: Imported from GitHub and set up for Replit
   - Installed Python 3.11
@@ -60,3 +68,5 @@ To publish the bot, click the "Deploy" button at the top of Replit interface.
   - Configured workflow to run the bot
   - Added token validation with helpful error messages
   - Configured deployment for 24/7 operation (Reserved VM)
+  - **Added webhook support** for Render deployment (free hosting)
+  - Created detailed deployment guide (RENDER_DEPLOY.md)
