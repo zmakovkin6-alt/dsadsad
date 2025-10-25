@@ -329,13 +329,14 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     print("Error:", context.error)
 
 # ========== Setup & main ==========
-def main():
+async def setup_application():
+    """Setup telegram application with handlers"""
     if not TOKEN:
         print("❌ Error: TELEGRAM_BOT_TOKEN environment variable is not set.")
         print("Please set your Telegram bot token using the Secrets feature.")
-        return
+        return None
     
-    app = ApplicationBuilder().token(TOKEN).build()
+    application = ApplicationBuilder().token(TOKEN).updater(None).build()
 
     conv = ConversationHandler(
         entry_points=[CommandHandler('add', add_start)],
@@ -356,18 +357,105 @@ def main():
         allow_reentry=True
     )
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_cmd))
-    app.add_handler(conv)
-    app.add_handler(CommandHandler("list", list_cmd))
-    app.add_handler(CommandHandler("clear", clear_cmd))
-    app.add_handler(CommandHandler("export", export_cmd))
-    app.add_handler(CommandHandler("compare", compare_cmd))
-    app.add_handler(CommandHandler("formulas", formulas_cmd))
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_cmd))
+    application.add_handler(conv)
+    application.add_handler(CommandHandler("list", list_cmd))
+    application.add_handler(CommandHandler("clear", clear_cmd))
+    application.add_handler(CommandHandler("export", export_cmd))
+    application.add_handler(CommandHandler("compare", compare_cmd))
+    application.add_handler(CommandHandler("formulas", formulas_cmd))
 
-    app.add_error_handler(error_handler)
-    print("Bot is running...")
-    app.run_polling()
+    application.add_error_handler(error_handler)
+    
+    await application.initialize()
+    await application.start()
+    return application
+
+def main():
+    """Main function - runs in polling mode (for local development)"""
+    import asyncio
+    
+    async def run_polling():
+        app = await setup_application()
+        if not app:
+            return
+        print("Bot is running in POLLING mode (local development)...")
+        await app.updater.initialize()
+        await app.updater.start_polling()
+        
+        try:
+            await asyncio.Event().wait()
+        except KeyboardInterrupt:
+            print("\nStopping bot...")
+            await app.updater.stop()
+            await app.stop()
+            await app.shutdown()
+    
+    asyncio.run(run_polling())
+
+async def run_webhook():
+    """Run in webhook mode (for Render deployment)"""
+    from aiohttp import web
+    import asyncio
+    
+    PORT = int(os.getenv("PORT", 8000))
+    WEBHOOK_URL = os.getenv("RENDER_EXTERNAL_URL", "")
+    
+    if not WEBHOOK_URL:
+        print("❌ Error: RENDER_EXTERNAL_URL not set. Webhook mode requires deployment URL.")
+        return
+    
+    app = await setup_application()
+    if not app:
+        return
+    
+    async def webhook_handler(request):
+        """Handle incoming webhook updates from Telegram"""
+        try:
+            data = await request.json()
+            update = Update.de_json(data, app.bot)
+            await app.update_queue.put(update)
+            return web.Response(text="OK")
+        except Exception as e:
+            print(f"Webhook error: {e}")
+            return web.Response(status=500)
+    
+    async def health_check(request):
+        """Health check endpoint for Render"""
+        return web.Response(text="OK")
+    
+    async def on_startup(app_web):
+        """Set webhook on startup"""
+        webhook_url = f"{WEBHOOK_URL}/webhook"
+        await app.bot.set_webhook(webhook_url)
+        print(f"✅ Webhook set to: {webhook_url}")
+        print(f"Bot is running in WEBHOOK mode on port {PORT}...")
+    
+    async def on_shutdown(app_web):
+        """Cleanup on shutdown"""
+        await app.bot.delete_webhook()
+        await app.stop()
+        await app.shutdown()
+    
+    web_app = web.Application()
+    web_app.router.add_post('/webhook', webhook_handler)
+    web_app.router.add_get('/health', health_check)
+    web_app.on_startup.append(on_startup)
+    web_app.on_shutdown.append(on_shutdown)
+    
+    runner = web.AppRunner(web_app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', PORT)
+    await site.start()
+    
+    await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    main()
+    MODE = os.getenv("BOT_MODE", "polling")
+    
+    if MODE == "webhook":
+        import asyncio
+        asyncio.run(run_webhook())
+    else:
+        main()
