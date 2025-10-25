@@ -9,7 +9,7 @@ from telegram.ext import (
 )
 
 # ========== Настройки ==========
-TOKEN = "8454137136:AAHK1gyKognJoFySSbU9vs6FqqTTKFSPfQ8"  # <-- вставь сюда токен
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 DATA_DIR = "bot_data"  # папка для хранения данных пользователей
 
 if not os.path.exists(DATA_DIR):
@@ -330,6 +330,11 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 
 # ========== Setup & main ==========
 def main():
+    if not TOKEN:
+        print("❌ Error: TELEGRAM_BOT_TOKEN environment variable is not set.")
+        print("Please set your Telegram bot token using the Secrets feature.")
+        return
+    
     app = ApplicationBuilder().token(TOKEN).build()
 
     conv = ConversationHandler(
